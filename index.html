@@ -307,7 +307,7 @@
       <li>也可按「選擇檔案」或把 <code>.txt</code>、<code>.csv</code>、<code>.md</code> 拖進來。<code>.json</code> 是本工具匯出的結果，載入後不必重算。</li>
       <li><b>計算位置有兩種</b>（左邊「計算位置」切換）：
         <ul>
-          <li><b>瀏覽器內</b>：任何方式開啟都能用（雙擊 viewer.html、GitHub Pages 皆可），資料不會離開你的電腦。第一次需<b>連網</b>下載函式庫與約 118 MB 的模型，之後瀏覽器會快取。限制：只有語意模型、只有 PCA、上限 1500 筆；向量因量化與本機版略有誤差（實測同一句話餘弦相似度 0.996–0.998）。</li>
+          <li><b>瀏覽器內</b>：任何方式開啟都能用（雙擊 viewer.html、GitHub Pages 皆可），資料不會離開你的電腦。第一次需<b>連網</b>下載函式庫與約 118 MB 的模型，之後瀏覽器會快取。限制：只有語意模型、只有 PCA、上限 1500 筆；向量因量化與本機版略有誤差（實測同一批文字餘弦相似度 0.991–0.998）。</li>
           <li><b>本機 Python</b>：需先<b>雙擊「啟動.bat」</b>，再用 <code>http://127.0.0.1:8765/</code> 開啟。用你電腦的 GPU，較快，可選 GPT-2 嵌入層與 t-SNE，上限 3000 筆。第一次要下載模型（語意模型約 470 MB、GPT-2 約 500 MB）。</li>
         </ul></li>
       <li>超過 1500 筆時 t-SNE 停用，只提供 PCA。</li>
@@ -820,8 +820,7 @@ let extractorP = null, progressSink = () => {};
 const tick = () => new Promise(r => setTimeout(r, 0));
 function getExtractor() {
   if (!extractorP) extractorP = import(TJS_URL)
-    .then(m => m.pipeline("feature-extraction", BROWSER_MODEL, { dtype: "q8", device: "wasm", progress_callback: p => progressSink(p) }))
-    .catch(e => { extractorP = null; throw e; });
+    .then(m => m.pipeline("feature-extraction", BROWSER_MODEL, { dtype: "q8", device: "wasm", progress_callback: p => progressSink(p) }))    .catch(e => { extractorP = null; throw e; });
   return extractorP;
 }
 function parseItemsJS(text) {   // 與 embed_core.parse_items 同規則
@@ -878,6 +877,22 @@ function neighborsJS(V, n, d, top = 10) {
   }
   return res;
 }
+// 自己做「分詞 → 模型 → 平均（遮罩）→ 正規化」，為了能指定 max_length。
+// 函式庫的 tokenizer 預設截斷在 512，而本機 Python 版是 128（模型的 max_seq_length）；不指定的話兩種模式對長文字會算出不同向量。
+// 實測：短文字與官方 pipeline 的餘弦 = 1；長文字截斷在 128 與 512 的向量餘弦只有 0.77。
+const EMBED_MAX_TOKENS = 128;
+async function embedBatch(ext, texts) {
+  const inp = ext.tokenizer(texts, { padding: true, truncation: true, max_length: EMBED_MAX_TOKENS });
+  const out = await ext.model(inp);
+  const H = out.last_hidden_state, [b, s, d] = H.dims, mask = inp.attention_mask.data, h = H.data, res = new Float32Array(b * d);
+  for (let i = 0; i < b; i++) {
+    let cnt = 0;
+    for (let t = 0; t < s; t++) { if (!Number(mask[i * s + t])) continue; cnt++; for (let j = 0; j < d; j++) res[i * d + j] += h[(i * s + t) * d + j]; }
+    let nm = 0; for (let j = 0; j < d; j++) { res[i * d + j] /= (cnt || 1); nm += res[i * d + j] ** 2; } nm = Math.sqrt(nm) || 1;
+    for (let j = 0; j < d; j++) res[i * d + j] /= nm;
+  }
+  return { data: res, d };
+}
 async function computeInBrowser(text, say) {
   const all = parseItemsJS(text);
   if (all.length < 2) throw new Error("至少需要 2 筆資料（每行一筆）");
@@ -888,8 +903,8 @@ async function computeInBrowser(text, say) {
   progressSink = () => {};
   let V = null, d = 0;
   for (let i = 0; i < n; i += 32) {
-    const out = await ext(items.slice(i, i + 32).map(x => x.t), { pooling: "mean", normalize: true });
-    if (!V) { d = out.dims[1]; V = new Float32Array(n * d); }
+    const out = await embedBatch(ext, items.slice(i, i + 32).map(x => x.t));
+    if (!V) { d = out.d; V = new Float32Array(n * d); }
     V.set(out.data, i * d); say(`計算向量 ${Math.min(i + 32, n)} / ${n}`); await tick();
   }
   say("降維、分群、找最近鄰…"); await tick();
