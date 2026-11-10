@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>詞向量 3D 互動視覺化</title>
+<style>
+  :root {
+    --bg: #f4f6f9; --panel: #ffffff; --text: #1c2230; --muted: #566074; --line: #c9cfda;
+    --accent: #1b5fd1; --accent-ink: #fff; --focus: #0b3d91; --stage: #fbfcfe; --grid: #dfe4ec;
+    --err: #b3261e; --err-bg: #fdecea; --ok: #1d6b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11141a; --panel: #1a1f29; --text: #e8ebf2; --muted: #a3adc0; --line: #3a4252;
+      --accent: #7fb0ff; --accent-ink: #0b1a33; --focus: #a9c8ff; --stage: #0e1218; --grid: #262d3a;
+      --err: #ffb4ab; --err-bg: #3b1d1a; --ok: #7fd49c;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  .app { display: grid; grid-template-columns: 320px minmax(0, 1fr) 320px; gap: 12px; padding: 12px; height: 100vh; }
+  @media (max-width: 1100px) { .app { grid-template-columns: 1fr; height: auto; } .stage { height: 70vh; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; overflow: auto; }
+  h1 { font-size: 1.1rem; margin: 0 0 2px; }
+  h2 { font-size: .95rem; margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h2:first-of-type { margin-top: 10px; }
+  .sub { color: var(--muted); font-size: .82rem; margin: 0 0 8px; }
+  label, .lbl { display: block; font-weight: 600; margin: 10px 0 4px; }
+  .help { color: var(--muted); font-size: .8rem; font-weight: 400; }
+  textarea, input[type=search], input[type=text] { width: 100%; font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  textarea { min-height: 120px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; }
+  .btn.sec { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .status { margin-top: 8px; font-size: .85rem; min-height: 1.4em; }
+  .status.err { color: var(--err); background: var(--err-bg); border-radius: 8px; padding: 6px 10px; }
+  .status.ok { color: var(--ok); }
+
+  /* File uploader（Carbon：按鈕＋拖放區，Space/Enter 啟動） */
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 10px; text-align: center; color: var(--muted); font-size: .85rem; }
+  .drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 6px; padding: 2px 6px 2px 10px;
+    border: 1px solid var(--line); border-radius: 999px; font-size: .82rem; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+  .chip button { border: 0; background: transparent; padding: 0 6px; font-size: 1rem; line-height: 1; }
+
+  /* Segmented control（Carbon Content switcher：恆有一個選取，左右方向鍵） */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .seg button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+
+  /* Switch（Carbon Toggle／Fluent Switch：立即生效，含標籤與狀態文字） */
+  .sw { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; background: transparent;
+    border: 0; padding: 6px 0; text-align: left; }
+  .sw .track { width: 38px; height: 22px; border-radius: 11px; background: var(--line); position: relative; flex: none; }
+  .sw .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .12s; }
+  .sw[aria-checked="true"] .track { background: var(--accent); }
+  .sw[aria-checked="true"] .track::after { left: 19px; }
+  .sw .st { color: var(--muted); font-size: .8rem; min-width: 1.6em; text-align: right; }
+
+  /* Slider（Fluent／Carbon：可見 label 與目前值） */
+  .slider { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
+  .slider input { width: 100%; accent-color: var(--accent); }
+  .slider output { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Search（Carbon：輸入後出現清除，Esc 清空） */
+  .search { position: relative; }
+  .search input { padding-right: 34px; }
+  .search button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; padding: 4px 8px; }
+  .search button[hidden] { display: none; }
+
+  /* Checkbox（圖例：各分類彼此獨立） */
+  .legend { display: grid; gap: 2px; max-height: 190px; overflow: auto; }
+  .legend label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 0; padding: 2px 0; cursor: pointer; }
+  .sw-c { width: 12px; height: 12px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.4); }
+  .legend small { color: var(--muted); margin-left: auto; }
+
+  .stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-height: 420px; }
+  canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  .overlay { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; gap: 8px; pointer-events: none; flex-wrap: wrap; }
+  .overlay > * { pointer-events: auto; }
+  .badge { background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; font-size: .8rem; }
+  .tip { position: absolute; z-index: 5; pointer-events: none; background: #20262f; color: #f2f4f8; font-size: .8rem; line-height: 1.45;
+    padding: 6px 10px; border-radius: 6px; max-width: 260px; display: none; }
+  .hintbar { position: absolute; left: 10px; bottom: 8px; font-size: .78rem; color: var(--muted); }
+
+  .nn { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .nn button { display: grid; grid-template-columns: 1fr auto; gap: 8px; width: 100%; text-align: left; background: transparent;
+    border: 0; border-radius: 6px; padding: 4px 6px; }
+  .nn button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .bar { height: 4px; border-radius: 2px; background: var(--accent); margin-top: 3px; }
+  .big { font-size: 1.05rem; font-weight: 700; word-break: break-word; }
+  .kv { color: var(--muted); font-size: .82rem; }
+  .ana { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; }
+  .ana .op { font-weight: 700; text-align: center; color: var(--muted); }
+  .ana.row3 { grid-template-columns: 1fr auto 1fr auto 1fr; }
+  .note { font-size: .78rem; color: var(--muted); }
+  code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
+
+  /* 範例按鈕 */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .ex { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 3px 10px; font-size: .82rem; }
+  .ex:hover:not(:disabled) { border-color: var(--accent); }
+  .ex:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Dialog（Carbon Passive Modal／Fluent Modal：✕、底部按鈕、Esc、點背景皆可關閉） */
+  dialog { padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text);
+    width: min(780px, 94vw); max-height: 88vh; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+  dialog::backdrop { background: rgba(10, 14, 22, .55); }
+  dialog[open] { display: flex; flex-direction: column; }
+  .dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .dlg-head h2 { margin: 0; padding: 0; border: 0; font-size: 1.1rem; }
+  .dlg-x { border: 0; background: transparent; font-size: 1.1rem; padding: 4px 10px; border-radius: 6px; }
+  .dlg-x:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .dlg-body { padding: 6px 20px 14px; overflow: auto; flex: 1; }
+  .dlg-body h3 { font-size: 1rem; margin: 20px 0 6px; }
+  .dlg-body p, .dlg-body li { margin: 4px 0; }
+  .dlg-body ol, .dlg-body ul { padding-left: 1.3em; margin: 4px 0; }
+  .dlg-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+  .exlist { display: grid; gap: 6px; margin: 8px 0; padding: 0; list-style: none; }
+  .exlist li { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .exlist .eq { font-weight: 700; }
+  .exlist .why { color: var(--muted); font-size: .82rem; }
+  table.keys { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  table.keys th, table.keys td { border-bottom: 1px solid var(--line); text-align: left; padding: 4px 8px; }
+  kbd { background: var(--bg); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: .85em; }
+  .callout { border-left: 4px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); padding: 6px 12px; border-radius: 0 8px 8px 0; margin: 8px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ───────── 左：資料與設定 ───────── -->
+  <aside class="panel" aria-label="資料與設定">
+    <h1>詞向量 3D 互動視覺化</h1>
+    <p class="sub">貼上或匯入很多詞與句子，在 3D 空間看它們的位置與距離。</p>
+
+    <h2>1. 輸入資料</h2>
+    <label for="txt">資料（每行一筆）<span class="help">　行尾加「,分組」可上色</span></label>
+    <textarea id="txt" spellcheck="false" aria-describedby="txtHelp"></textarea>
+    <div id="txtHelp" class="note">例：<code>貓,動物</code>　<code>蘋果,水果</code>　<code>我肚子餓</code>。#開頭為註解。</div>
+
+    <div class="lbl">或匯入檔案</div>
+    <div class="drop" id="drop">
+      <button class="btn sec" id="pick" type="button">選擇檔案…</button>
+      <input id="file" type="file" accept=".txt,.csv,.md,.json" hidden>
+      <div>或把 .txt／.csv／.md／.json 拖到這裡</div>
+    </div>
+    <div id="chipBox"></div>
+
+    <div class="lbl" id="srcLbl">向量來源</div>
+    <div class="seg" role="radiogroup" aria-labelledby="srcLbl" id="segSrc">
+      <button type="button" role="radio" aria-checked="true" data-v="semantic">語意模型</button>
+      <button type="button" role="radio" aria-checked="false" data-v="gpt2-wte">GPT-2 嵌入層</button>
+    </div>
+    <div class="note" id="srcNote">語意模型：中英文皆可，詞義相近者會靠近。GPT-2 嵌入層：只是詞表查表，沒有上下文，中文效果差。</div>
+
+    <div class="lbl" id="whereLbl">計算位置</div>
+    <div class="seg" role="radiogroup" aria-labelledby="whereLbl" id="segWhere">
+      <button type="button" role="radio" aria-checked="false" data-v="server">本機 Python</button>
+      <button type="button" role="radio" aria-checked="true" data-v="browser">瀏覽器內</button>
+    </div>
+    <div class="note" id="whereNote"></div>
+
+    <div class="row">
+      <button class="btn" id="go" type="button">計算並顯示</button>
+      <button class="btn sec" id="demo" type="button">載入範例</button>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+
+    <h2>2. 顯示</h2>
+    <div class="lbl" id="dimLbl">降維方式</div>
+    <div class="seg" role="radiogroup" aria-labelledby="dimLbl" id="segDim">
+      <button type="button" role="radio" aria-checked="true" data-v="p">PCA</button>
+      <button type="button" role="radio" aria-checked="false" data-v="s">t-SNE</button>
+    </div>
+    <div class="note">PCA 保留整體方向；t-SNE 讓近的更聚、群更分開，但遠近比例不可靠。軸本身沒有語意。</div>
+
+    <div class="lbl" id="colLbl">顏色依</div>
+    <div class="seg" role="radiogroup" aria-labelledby="colLbl" id="segCol">
+      <button type="button" role="radio" aria-checked="true" data-v="cluster">自動分群</button>
+      <button type="button" role="radio" aria-checked="false" data-v="group">我的分組</button>
+    </div>
+
+    <label for="kRange">分群數 k</label>
+    <div class="slider"><input type="range" id="kRange" min="2" max="16" step="1" value="8"><output id="kOut" for="kRange">8</output></div>
+    <label for="sizeRange">點大小</label>
+    <div class="slider"><input type="range" id="sizeRange" min="2" max="14" step="1" value="6"><output id="sizeOut" for="sizeRange">6</output></div>
+    <label for="nnRange">最近鄰數量</label>
+    <div class="slider"><input type="range" id="nnRange" min="1" max="10" step="1" value="5"><output id="nnOut" for="nnRange">5</output></div>
+
+    <button class="sw" id="swLabels" type="button" role="switch" aria-checked="true"><span>顯示文字標籤</span><span class="st">開</span><span class="track" aria-hidden="true"></span></button>
+    <button class="sw" id="swLines" type="button" role="switch" aria-checked="false"><span>顯示最近鄰連線</span><span class="st">關</span><span class="track" aria-hidden="true"></span></button>
+    <button class="sw" id="swRot" type="button" role="switch" aria-checked="false"><span>自動旋轉</span><span class="st">關</span><span class="track" aria-hidden="true"></span></button>
+
+    <h2>3. 圖例／篩選</h2>
+    <div class="legend" id="legend" role="group" aria-label="顯示或隱藏分類"></div>
+
+    <h2>4. 匯出</h2>
+    <div class="row">
+      <button class="btn sec" id="expJson" type="button">匯出 JSON</button>
+      <button class="btn sec" id="expPng" type="button">匯出 PNG</button>
+    </div>
+    <div class="note">JSON 含向量，之後可直接拖回來載入，不必重算。</div>
+  </aside>
+
+  <!-- ───────── 中：3D ───────── -->
+  <main class="stage" id="stage">
+    <canvas id="cv" tabindex="0" aria-label="詞向量 3D 散點圖。拖曳旋轉，滾輪縮放，Shift 拖曳平移；鍵盤方向鍵旋轉，加減鍵縮放，0 重設視角。"></canvas>
+    <div class="overlay">
+      <div class="badge" id="badge" aria-live="polite">尚未載入</div>
+      <div class="row" style="margin:0"><button class="btn sec" id="helpBtn" type="button" aria-haspopup="dialog">使用說明</button><button class="btn sec" id="reset" type="button">重設視角</button></div>
+    </div>
+    <div class="tip" id="tip" role="tooltip"></div>
+    <div class="hintbar">拖曳旋轉　滾輪縮放　Shift＋拖曳平移　點選看最近鄰</div>
+  </main>
+
+  <!-- ───────── 右：細節 ───────── -->
+  <aside class="panel" aria-label="細節與分析">
+    <h2>搜尋</h2>
+    <div class="search">
+      <label for="q" class="help" style="margin:0 0 4px">搜尋詞或分組（Esc 清空）</label>
+      <input type="search" id="q" autocomplete="off" placeholder="例如：蘋果">
+      <button id="qClear" type="button" aria-label="清除搜尋" hidden>✕</button>
+    </div>
+    <ul class="nn" id="hits" aria-label="搜尋結果"></ul>
+
+    <h2>選取的項目</h2>
+    <div id="sel" aria-live="polite"><span class="note">點選畫面上的點，或從搜尋結果挑一個。</span></div>
+
+    <h2>詞向量運算（A − B + C）</h2>
+    <div class="note">經典例子：king − man + woman ≈ queen。在高維原向量上計算，不是在 3D 畫面上。</div>
+    <div class="lbl" style="margin-top:8px">範例（點一下就計算）</div>
+    <div class="chips" id="anaEx" role="group" aria-label="詞向量運算範例"></div>
+    <div class="ana row3" style="margin-top:8px">
+      <input type="text" id="aA" list="dl" aria-label="A" placeholder="A">
+      <span class="op" aria-hidden="true">−</span>
+      <input type="text" id="aB" list="dl" aria-label="B" placeholder="B">
+      <span class="op" aria-hidden="true">＋</span>
+      <input type="text" id="aC" list="dl" aria-label="C" placeholder="C">
+    </div>
+    <datalist id="dl"></datalist>
+    <div class="row"><button class="btn" id="aGo" type="button">計算</button><button class="btn sec" id="aClr" type="button">清除</button></div>
+    <div class="status" id="aStatus" role="status" aria-live="polite"></div>
+    <ul class="nn" id="aRes" aria-label="運算結果"></ul>
+  </aside>
+</div>
+
+<dialog id="help" aria-labelledby="helpTitle">
+  <div class="dlg-head">
+    <h2 id="helpTitle">使用說明與範例</h2>
+    <button class="dlg-x" id="helpX" type="button" aria-label="關閉使用說明">✕</button>
+  </div>
+  <div class="dlg-body" tabindex="0" role="region" aria-label="使用說明內容（可用方向鍵捲動）">
+
+    <h3>這個工具在做什麼</h3>
+    <p>把每個詞或句子變成一組數字（<b>向量</b>），再壓縮成 3D 座標畫出來。<b>意思越接近的，在空間裡離得越近。</b>你可以旋轉、縮放、點選，並對向量做加減運算。</p>
+
+    <h3>30 秒快速開始（用內建範例）</h3>
+    <ol>
+      <li>用滑鼠<b>拖曳</b>畫面旋轉，<b>滾輪</b>縮放。</li>
+      <li>點一個點（例如「貓」），右邊會列出它的<b>最近鄰</b>與相似度，畫面上會連線。</li>
+      <li>在右上「搜尋」輸入「蘋果」，相關的點會被標出，其他變淡。按 <kbd>Esc</kbd> 清空。</li>
+      <li>左邊「顏色依」切到「我的分組」，看自己的分類和模型自動分群是否一致。</li>
+      <li>往下看「詞向量運算」，點一個範例按鈕。</li>
+    </ol>
+    <div class="callout" id="helpDataNote"></div>
+    <p><button class="btn sec" id="helpDemo" type="button">切換到內建範例資料</button></p>
+
+    <h3>看懂畫面</h3>
+    <ul>
+      <li><b>一個點</b>＝一筆資料（詞或句子）。<b>距離</b>＝語意相近程度。<b>顏色</b>＝分群或你的分組。</li>
+      <li><b>X／Y／Z 軸沒有語意</b>，只是降維後的方向，不要解讀成「X 代表什麼」。</li>
+      <li><b>PCA</b> 保留整體方向，比例較可信；<b>t-SNE</b> 讓近的更聚、群更分開，但<b>遠近比例不可靠</b>，只適合看「誰跟誰同一群」。</li>
+      <li>3D 只是 384 維的投影，所以兩個點在畫面上看起來近，不一定真的近；最近鄰的相似度數字才是依據。</li>
+    </ul>
+
+    <h3>詞向量運算（A − B + C）怎麼玩</h3>
+    <p><code>king − man + woman</code>：減掉「男性」方向、加上「女性」方向，得到「女性的君主」，找最接近的詞。這個「方向」不是人寫的，是模型讀大量文字後自己學到的。</p>
+    <div class="callout"><b>最重要的一件事：先問「答案是不是本來就在 C 旁邊？」</b>運算結果下方會顯示：這個答案原本是 C 的第幾近鄰。
+      如果本來就是第 1 名，運算等於沒做事，只是看起來成功。只有答案「原本排得很後面、運算後才升到第 1」，才表示加減真的帶來了新資訊。</div>
+    <p><b>建議這樣做實驗：</b></p>
+    <ol>
+      <li><b>對照：</b>先搜尋或點選 C，記下它的最近鄰；再做運算，看答案的排名怎麼變。</li>
+      <li><b>換 C：</b>保持 <code>king − man</code>，把 C 換成不同的詞，看結果是否跟著 C 的類別走。</li>
+      <li><b>看排名升了多少，不要只看分數：</b>分數高不代表運算有效，因為近義詞本來分數就高。</li>
+      <li><b>做一組沒意義的：</b>結果通常只會退回 C 的近義詞（例如下面的 <code>貓 − 老師 + 汽車</code> 會得到 轎車），用來分辨規律和硬湊。</li>
+    </ol>
+    <p>下面的範例都是在<b>內建範例資料＋語意模型</b>上實測過的（你自己的資料可能不同），並註明運算有沒有加入資訊：</p>
+    <ul class="exlist" id="helpEx"></ul>
+    <div class="callout">這些結果不一定每次都成功，也會學到偏見。例如範例資料中 <code>woman</code> 最近的是「護理師」而不是 queen，這是模型從文字學到的社會關聯，不代表事實。</div>
+
+    <h3>輸入你自己的資料</h3>
+    <ul>
+      <li>左邊文字框<b>每行一筆</b>；行尾加「半形逗號＋分組」（逗號後面不要有空格）或 Tab 再加分組，可上色，例如 <code>貓,動物</code>。全形逗號「，」和英文句子裡的「, 」不會被當成分組。<code>#</code> 開頭是註解，空行會略過。</li>
+      <li>檔案請存成 <b>UTF-8</b>。每行超過 300 字會被截斷；語意模型實際只讀每筆的前 128 個 token。</li>
+      <li>也可按「選擇檔案」或把 <code>.txt</code>、<code>.csv</code>、<code>.md</code> 拖進來。<code>.json</code> 是本工具匯出的結果，載入後不必重算。</li>
+      <li><b>計算位置有兩種</b>（左邊「計算位置」切換）：
+        <ul>
+          <li><b>瀏覽器內</b>：任何方式開啟都能用（雙擊 viewer.html、GitHub Pages 皆可），資料不會離開你的電腦。第一次需<b>連網</b>下載函式庫與約 118 MB 的模型，之後瀏覽器會快取。限制：只有語意模型、只有 PCA、上限 1500 筆；向量因量化與本機版略有誤差（實測同一句話餘弦相似度 0.996–0.998）。</li>
+          <li><b>本機 Python</b>：需先<b>雙擊「啟動.bat」</b>，再用 <code>http://127.0.0.1:8765/</code> 開啟。用你電腦的 GPU，較快，可選 GPT-2 嵌入層與 t-SNE，上限 3000 筆。第一次要下載模型（語意模型約 470 MB、GPT-2 約 500 MB）。</li>
+        </ul></li>
+      <li>超過 1500 筆時 t-SNE 停用，只提供 PCA。</li>
+      <li><b>向量來源</b>：「語意模型」中英文都可，意思近的會靠近；「GPT-2 嵌入層」只是詞表查表（沒有上下文），中文效果差，適合拿來對照課堂講的輸入嵌入層。</li>
+    </ul>
+
+    <h3>鍵盤操作</h3>
+    <table class="keys">
+      <tr><th>位置</th><th>按鍵</th><th>作用</th></tr>
+      <tr><td>3D 畫面（先按 Tab 聚焦）</td><td><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></td><td>旋轉</td></tr>
+      <tr><td>3D 畫面</td><td><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> <kbd>Esc</kbd></td><td>縮放、重設視角、取消選取</td></tr>
+      <tr><td>切換按鈕（降維、顏色、來源）</td><td><kbd>←</kbd><kbd>→</kbd></td><td>切換選項</td></tr>
+      <tr><td>開關</td><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>開或關</td></tr>
+      <tr><td>搜尋框</td><td><kbd>Esc</kbd></td><td>清空</td></tr>
+      <tr><td>本視窗</td><td><kbd>Esc</kbd></td><td>關閉（焦點會回到「使用說明」按鈕）</td></tr>
+    </table>
+  </div>
+  <div class="dlg-foot"><button class="btn" id="helpClose" type="button">關閉</button></div>
+</dialog>
+
+<script src="demo_data.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const PALETTE = ["#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7","#9A9A9A","#8DD3C7","#BEBADA","#FB8072","#80B1D3","#B3DE69","#FCCDE5","#BC80BD","#CCEBC5"];
+
+const S = {
+  data: null, vec: null, norm: null, dim: 0,
+  method: "p", colorBy: "cluster", size: 6, nnN: 5,
+  labels: true, lines: false, rot: false,
+  hidden: new Set(), sel: -1, hover: -1, hits: new Set(), ana: null,
+  clusters: null, yaw: 0.6, pitch: 0.35, zoom: 1, panX: 0, panY: 0, source: "semantic",
+  pj: null
+};
+const cv = $("cv"), ctx = cv.getContext("2d"), tip = $("tip");
+let dirty = true, W = 0, H = 0, dpr = 1;
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ───────── 小工具 ───────── */
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  if (props) for (const k in props) { if (k === "text") e.textContent = props[k]; else e.setAttribute(k, props[k]); }
+  kids.forEach(c => e.append(c)); return e;
+}
+function status(msg, kind) { const s = $("status"); s.textContent = msg || ""; s.className = "status" + (kind ? " " + kind : ""); }
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function fmt(x) { return (Math.round(x * 100) / 100).toFixed(2); }
+
+/* Segmented control：恆有一個選取、Tab 進入、左右方向鍵移動 */
+function seg(id, onChange) {
+  const g = $(id), btns = [...g.querySelectorAll("button")];
+  function select(b, focus) {
+    if (b.getAttribute("aria-disabled") === "true") return;
+    btns.forEach(x => { x.setAttribute("aria-checked", x === b ? "true" : "false"); x.tabIndex = x === b ? 0 : -1; });
+    if (focus) b.focus();
+    onChange(b.dataset.v);
+  }
+  btns.forEach(b => {
+    b.tabIndex = b.getAttribute("aria-checked") === "true" ? 0 : -1;
+    b.addEventListener("click", () => select(b, false));
+    b.addEventListener("keydown", e => {
+      const enabled = btns.filter(x => x.getAttribute("aria-disabled") !== "true");
+      const i = enabled.indexOf(b);
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); select(enabled[(i + 1) % enabled.length], true); }
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); select(enabled[(i - 1 + enabled.length) % enabled.length], true); }
+    });
+  });
+  return { set(v) { const b = btns.find(x => x.dataset.v === v); if (b) select(b, false); },
+           disable(v, off) { const b = btns.find(x => x.dataset.v === v); b.setAttribute("aria-disabled", off ? "true" : "false"); } };
+}
+/* Switch：立即生效，附狀態文字 */
+function sw(id, init, onChange) {
+  const b = $(id), st = b.querySelector(".st");
+  function set(v, fire) { b.setAttribute("aria-checked", v ? "true" : "false"); st.textContent = v ? "開" : "關"; if (fire) onChange(v); }
+  b.addEventListener("click", () => set(b.getAttribute("aria-checked") !== "true", true));
+  set(init, false);
+  return { set: v => set(v, true), get: () => b.getAttribute("aria-checked") === "true" };
+}
+function slider(id, outId, onChange, onCommit) {
+  const r = $(id), o = $(outId);
+  r.addEventListener("input", () => { o.textContent = r.value; onChange(+r.value); });
+  if (onCommit) r.addEventListener("change", () => onCommit(+r.value));
+  return { set(v) { r.value = v; o.textContent = r.value; } };
+}
+
+/* ───────── 資料載入 ───────── */
+function b64ToF32(b64) {
+  const bin = atob(b64), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Float32Array(u.buffer);
+}
+function load(data) {
+  if (!data || !Array.isArray(data.items) || !data.items.length || !data.items[0].p) throw new Error("資料格式不正確（缺少 items 或座標）");
+  S.data = data; S.dim = data.meta?.dim || 0; S.vec = null; S.norm = null;
+  if (data.vec && S.dim) {
+    const v = b64ToF32(data.vec); const n = data.items.length;
+    if (v.length === n * S.dim) {
+      S.vec = v; S.norm = new Float32Array(v.length);
+      for (let i = 0; i < n; i++) {
+        let s = 0; for (let j = 0; j < S.dim; j++) s += v[i * S.dim + j] ** 2;
+        s = Math.sqrt(s) || 1; for (let j = 0; j < S.dim; j++) S.norm[i * S.dim + j] = v[i * S.dim + j] / s;
+      }
+    }
+  }
+  S.clusters = Int32Array.from(data.items.map(x => x.c));
+  S.hidden.clear(); S.sel = -1; S.hover = -1; S.hits.clear(); S.ana = null;
+  S.source = data.meta?.source || "semantic";
+  $("segSrc").querySelectorAll("button").forEach(b => b.setAttribute("aria-checked", b.dataset.v === S.source ? "true" : "false"));
+  const hasS = data.items[0].s !== undefined, hasG = (data.meta?.groups || []).length > 0;
+  segDim.disable("s", !hasS); if (!hasS && S.method === "s") { S.method = "p"; segDim.set("p"); }
+  segCol.disable("group", !hasG); if (!hasG && S.colorBy === "group") { S.colorBy = "cluster"; segCol.set("cluster"); }
+  kS.set(data.meta?.k || 8);
+  $("dl").replaceChildren(...data.items.map(x => el("option", { value: x.t })));
+  $("aGo").disabled = !S.vec;
+  $("aStatus").textContent = S.vec ? "" : "這份資料沒有原始向量，無法做向量運算。";
+  buildLegend(); renderSel(); renderHits(); $("aRes").replaceChildren(); renderExamples();
+  const m = data.meta || {};
+  $("badge").textContent = `${data.items.length} 筆｜${m.dim || "?"} 維 → 3D｜${m.source === "gpt2-wte" ? "GPT-2 嵌入層" : "語意模型"}${m.runtime === "browser" ? "（瀏覽器內計算）" : ""}`;
+  resetView(); dirty = true;
+  if (m.truncated) status("資料超過上限，只取前 " + data.items.length + " 筆。", "err");
+}
+
+/* ───────── k-means（前端，改 k 時即時重新分群） ───────── */
+function kmeans(k) { return kmeansOn(S.norm, S.data.items.length, S.dim, k); }
+function kmeansOn(X, n, d, k) {
+  let seed = 7; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  k = Math.min(k, n); const C = new Float32Array(k * d), d2 = new Float64Array(n).fill(Infinity);
+  const first = Math.floor(rnd() * n); C.set(X.subarray(first * d, first * d + d), 0);
+  for (let c = 1; c < k; c++) {
+    let tot = 0;
+    for (let i = 0; i < n; i++) { let s = 0; for (let j = 0; j < d; j++) { const t = X[i * d + j] - C[(c - 1) * d + j]; s += t * t; } if (s < d2[i]) d2[i] = s; tot += d2[i]; }
+    let r = rnd() * tot, pick = n - 1; for (let i = 0; i < n; i++) { r -= d2[i]; if (r <= 0) { pick = i; break; } }
+    C.set(X.subarray(pick * d, pick * d + d), c * d);
+  }
+  const lab = new Int32Array(n);
+  for (let it = 0; it < 30; it++) {
+    let moved = 0;
+    for (let i = 0; i < n; i++) {
+      let best = 0, bd = Infinity;
+      for (let c = 0; c < k; c++) { let s = 0; for (let j = 0; j < d; j++) { const t = X[i * d + j] - C[c * d + j]; s += t * t; } if (s < bd) { bd = s; best = c; } }
+      if (lab[i] !== best || it === 0) { lab[i] = best; moved++; }
+    }
+    const cnt = new Int32Array(k); C.fill(0);
+    for (let i = 0; i < n; i++) { cnt[lab[i]]++; for (let j = 0; j < d; j++) C[lab[i] * d + j] += X[i * d + j]; }
+    for (let c = 0; c < k; c++) if (cnt[c]) for (let j = 0; j < d; j++) C[c * d + j] /= cnt[c];
+    if (!moved) break;
+  }
+  return lab;
+}
+
+/* ───────── 顏色／圖例 ───────── */
+function catOf(i) {
+  if (S.colorBy === "group") { const g = S.data.items[i].g; return g || "（未分組）"; }
+  return "群 " + (S.clusters[i] + 1);
+}
+function cats() {
+  const m = new Map();
+  S.data.items.forEach((_, i) => { const c = catOf(i); m.set(c, (m.get(c) || 0) + 1); });
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh-Hant", { numeric: true }));
+}
+function colorOf(i) { const list = S._catList; const idx = list.indexOf(catOf(i)); return PALETTE[idx % PALETTE.length]; }
+function buildLegend() {
+  const list = cats(); S._catList = list.map(x => x[0]);
+  const box = $("legend"); box.replaceChildren();
+  list.forEach(([name, n], idx) => {
+    const cb = el("input", { type: "checkbox" }); cb.checked = !S.hidden.has(name);
+    cb.addEventListener("change", () => { cb.checked ? S.hidden.delete(name) : S.hidden.add(name); dirty = true; });
+    const sw = el("span", { class: "sw-c", "aria-hidden": "true" }); sw.style.background = PALETTE[idx % PALETTE.length];
+    box.append(el("label", null, cb, sw, el("span", { text: name }), el("small", { text: String(n) })));
+  });
+}
+
+/* ───────── 3D 投影 ───────── */
+function pos(i) { const it = S.data.items[i]; return (S.method === "s" && it.s) ? it.s : it.p; }
+function project() {
+  const n = S.data.items.length, cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+  const base = Math.min(W, H) * 0.36 * S.zoom, cam = 3.2, cx = W / 2 + S.panX, cyy = H / 2 + S.panY;
+  const xs = new Float32Array(n), ys = new Float32Array(n), zs = new Float32Array(n), ps = new Float32Array(n), vis = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const [x, y, z] = pos(i);
+    const x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+    const p = cam / (cam - z2);
+    xs[i] = cx + x1 * base * p; ys[i] = cyy - y2 * base * p; zs[i] = z2; ps[i] = p;
+    vis[i] = S.hidden.has(catOf(i)) ? 0 : 1;
+  }
+  return { xs, ys, zs, ps, vis, base, cx, cy: cyy };
+}
+
+function axisLine(P, v, label) {
+  const [x, y, z] = v, cyw = Math.cos(S.yaw), syw = Math.sin(S.yaw), cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+  const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw, y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  const p = 3.2 / (3.2 - z2);
+  return { x: P.cx + x1 * P.base * p, y: P.cy - y2 * P.base * p, label };
+}
+
+function draw() {
+  if (!S.data) { ctx.clearRect(0, 0, W, H); return; }
+  const P = project(); S.pj = P;
+  const n = S.data.items.length, bg = css("--stage"), fg = css("--text"), grid = css("--grid"), acc = css("--accent");
+  ctx.clearRect(0, 0, W, H); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  // 座標軸（方向參考，軸本身無語意）
+  const o = axisLine(P, [0, 0, 0]);
+  ctx.lineWidth = 1; ctx.font = "11px system-ui"; ctx.textBaseline = "middle";
+  [[[1, 0, 0], "X"], [[0, 1, 0], "Y"], [[0, 0, 1], "Z"]].forEach(([v, l]) => {
+    const a = axisLine(P, v.map(t => t * 1.05), l);
+    ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(a.x, a.y); ctx.stroke();
+    ctx.fillStyle = css("--muted"); ctx.fillText(l, a.x + 4, a.y);
+  });
+
+  const emph = new Set();
+  if (S.sel >= 0) { emph.add(S.sel); S.data.items[S.sel].nn.slice(0, S.nnN).forEach(([j]) => emph.add(j)); }
+  if (S.hover >= 0) emph.add(S.hover);
+  S.hits.forEach(i => emph.add(i));
+  if (S.ana) { S.ana.ids.forEach(i => emph.add(i)); S.ana.res.forEach(([j]) => emph.add(j)); }
+  const dimOthers = S.hits.size > 0;
+
+  // 連線
+  if (S.lines || S.sel >= 0) {
+    ctx.lineWidth = 1;
+    const srcs = S.sel >= 0 ? [S.sel] : [...Array(n).keys()];
+    const cnt = S.sel >= 0 ? S.nnN : 1;
+    for (const i of srcs) {
+      if (!P.vis[i]) continue;
+      for (const [j, sim] of S.data.items[i].nn.slice(0, cnt)) {
+        if (!P.vis[j]) continue;
+        ctx.strokeStyle = acc; ctx.globalAlpha = S.sel >= 0 ? Math.max(.25, sim) : .22;
+        ctx.beginPath(); ctx.moveTo(P.xs[i], P.ys[i]); ctx.lineTo(P.xs[j], P.ys[j]); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  // 類比：C → 結果 虛線
+  if (S.ana && S.ana.res.length) {
+    const c = S.ana.ids[2], r = S.ana.res[0][0];
+    ctx.setLineDash([6, 4]); ctx.strokeStyle = fg; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(P.xs[c], P.ys[c]); ctx.lineTo(P.xs[r], P.ys[r]); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // 點（遠到近）
+  const order = [...Array(n).keys()].filter(i => P.vis[i]).sort((a, b) => P.zs[a] - P.zs[b]);
+  for (const i of order) {
+    const r = Math.max(1.5, S.size * P.ps[i] * 0.6);
+    const a = dimOthers && !emph.has(i) ? 0.18 : Math.min(1, 0.45 + 0.45 * P.ps[i] / 1.6);
+    ctx.globalAlpha = a; ctx.fillStyle = colorOf(i);
+    ctx.beginPath(); ctx.arc(P.xs[i], P.ys[i], r, 0, 7); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (emph.has(i)) { ctx.lineWidth = i === S.sel ? 3 : 2; ctx.strokeStyle = fg; ctx.beginPath(); ctx.arc(P.xs[i], P.ys[i], r + 3, 0, 7); ctx.stroke(); }
+  }
+  // 標籤
+  if (S.labels || emph.size) {
+    ctx.font = "12px 'Noto Sans TC','Microsoft JhengHei',system-ui"; ctx.textBaseline = "alphabetic"; ctx.lineJoin = "round";
+    const all = S.labels && order.length <= 150;
+    // 避讓：被強調的一定畫；其餘由近到遠，壓到已畫標籤就略過（放大後自然顯示）
+    const placed = [], overlap = r => placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]);
+    const lab = [...order].reverse().filter(i => all || emph.has(i)).sort((a, b) => (emph.has(b) ? 1 : 0) - (emph.has(a) ? 1 : 0));
+    for (const i of lab) {
+      const t = S.data.items[i].t.length > 18 ? S.data.items[i].t.slice(0, 17) + "…" : S.data.items[i].t;
+      const x = P.xs[i] + S.size * P.ps[i] * 0.6 + 5, y = P.ys[i] - 4, w = ctx.measureText(t).width;
+      const rect = [x - 1, y - 12, x + w + 1, y + 3];
+      if (!emph.has(i) && overlap(rect)) continue;
+      placed.push(rect);
+      ctx.globalAlpha = dimOthers && !emph.has(i) ? .25 : 1;
+      ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.strokeText(t, x, y);
+      ctx.fillStyle = fg; ctx.fillText(t, x, y);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (S.rot && !reduceMotion) { S.yaw += 0.006; dirty = true; }
+}
+function loop() { if (dirty) { dirty = false; draw(); } requestAnimationFrame(loop); }
+
+function resize() {
+  dpr = window.devicePixelRatio || 1; const r = $("stage").getBoundingClientRect();
+  W = r.width; H = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); dirty = true;
+}
+new ResizeObserver(resize).observe($("stage"));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => dirty = true);
+
+function resetView() { S.yaw = 0.6; S.pitch = 0.35; S.zoom = 1; S.panX = 0; S.panY = 0; dirty = true; }
+
+/* ───────── 互動：旋轉／縮放／平移／挑選 ───────── */
+const ptrs = new Map(); let lastPinch = 0, moved = false, downAt = null;
+cv.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("pointerdown", e => {
+  cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, shift: e.shiftKey || e.button === 2 || e.button === 1 });
+  moved = false; downAt = { x: e.clientX, y: e.clientY }; hideTip();
+});
+cv.addEventListener("pointermove", e => {
+  const p = ptrs.get(e.pointerId);
+  if (p) {
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) moved = true;
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (lastPinch) S.zoom = Math.min(8, Math.max(.25, S.zoom * d / lastPinch)); lastPinch = d;
+    } else if (p.shift || e.shiftKey) { S.panX += dx; S.panY += dy; }
+    else { S.yaw += dx * 0.008; S.pitch = Math.max(-1.45, Math.min(1.45, S.pitch + dy * 0.008)); }
+    dirty = true;
+  } else if (S.data) { hover(e); }
+});
+function endPtr(e) { ptrs.delete(e.pointerId); lastPinch = 0; }
+cv.addEventListener("pointerup", e => { const wasClick = !moved && ptrs.size === 1; endPtr(e); if (wasClick) { const i = pick(e); select(i); } });
+cv.addEventListener("pointercancel", endPtr);
+cv.addEventListener("pointerleave", () => { if (!ptrs.size) { S.hover = -1; hideTip(); dirty = true; } });
+cv.addEventListener("wheel", e => { e.preventDefault(); S.zoom = Math.min(8, Math.max(.25, S.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); dirty = true; }, { passive: false });
+cv.addEventListener("keydown", e => {
+  const k = e.key; let used = true;
+  if (k === "ArrowLeft") S.yaw -= .08; else if (k === "ArrowRight") S.yaw += .08;
+  else if (k === "ArrowUp") S.pitch = Math.min(1.45, S.pitch + .08); else if (k === "ArrowDown") S.pitch = Math.max(-1.45, S.pitch - .08);
+  else if (k === "+" || k === "=") S.zoom = Math.min(8, S.zoom * 1.1); else if (k === "-") S.zoom = Math.max(.25, S.zoom / 1.1);
+  else if (k === "0") resetView(); else if (k === "Escape") { select(-1); hideTip(); } else used = false;
+  if (used) { e.preventDefault(); dirty = true; }
+});
+function pick(e) {
+  if (!S.pj) return -1; const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, P = S.pj;
+  let best = -1, bd = 1e9;
+  for (let i = 0; i < P.xs.length; i++) {
+    if (!P.vis[i]) continue;
+    const rad = Math.max(6, S.size * P.ps[i] * 0.6 + 4), d = Math.hypot(P.xs[i] - mx, P.ys[i] - my);
+    if (d <= rad && (d - P.zs[i] * 3) < bd) { bd = d - P.zs[i] * 3; best = i; }
+  }
+  return best;
+}
+function hover(e) {
+  const i = pick(e);
+  if (i !== S.hover) { S.hover = i; dirty = true; }
+  if (i < 0) return hideTip();
+  const it = S.data.items[i], nn = it.nn.slice(0, 3).map(([j]) => S.data.items[j].t).join("、");
+  tip.textContent = `${it.t}｜${catOf(i)}${it.g && S.colorBy !== "group" ? "｜" + it.g : ""}｜近：${nn}`;
+  tip.style.display = "block";
+  const r = $("stage").getBoundingClientRect(); let x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
+  x = Math.min(x, r.width - tip.offsetWidth - 8); y = Math.min(y, r.height - tip.offsetHeight - 8);
+  tip.style.left = Math.max(4, x) + "px"; tip.style.top = Math.max(4, y) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+
+/* ───────── 選取／最近鄰／搜尋／類比 ───────── */
+function itemButton(i, sim) {
+  const it = S.data.items[i], b = el("button", { type: "button" });
+  const left = el("span", null, el("span", { text: it.t }), el("span", { class: "kv", text: "　" + (it.g || "") }));
+  b.append(left);
+  if (sim !== undefined) { const r = el("span", { text: fmt(sim), class: "kv" }); b.append(r); const bar = el("div", { class: "bar" }); bar.style.width = Math.max(2, Math.min(100, sim * 100)) + "%"; left.append(bar); }
+  else b.append(el("span"));
+  b.addEventListener("click", () => select(i));
+  return el("li", null, b);
+}
+function select(i) {
+  S.sel = i; dirty = true; renderSel();
+}
+function renderSel() {
+  const box = $("sel"); box.replaceChildren();
+  if (!S.data || S.sel < 0) { box.append(el("span", { class: "note", text: "點選畫面上的點，或從搜尋結果挑一個。" })); return; }
+  const it = S.data.items[S.sel];
+  box.append(el("div", { class: "big", text: it.t }),
+    el("div", { class: "kv", text: `${catOf(S.sel)}${it.g ? "｜分組：" + it.g : ""}` }),
+    el("div", { class: "lbl", text: `最近鄰（餘弦相似度，前 ${S.nnN}）` }));
+  const ul = el("ul", { class: "nn" }); it.nn.slice(0, S.nnN).forEach(([j, s]) => ul.append(itemButton(j, s))); box.append(ul);
+}
+function renderHits() {
+  const ul = $("hits"); ul.replaceChildren(); if (!S.data) return;
+  const ids = [...S.hits].slice(0, 100); ids.forEach(i => ul.append(itemButton(i)));
+  if (S.hits.size > 100) ul.append(el("li", { class: "note", text: `… 另有 ${S.hits.size - 100} 筆` }));
+}
+function doSearch() {
+  const q = $("q").value.trim().toLowerCase(); $("qClear").hidden = !q; S.hits.clear();
+  if (q && S.data) S.data.items.forEach((it, i) => { if (it.t.toLowerCase().includes(q) || (it.g || "").toLowerCase().includes(q)) S.hits.add(i); });
+  renderHits(); dirty = true;
+}
+$("q").addEventListener("input", doSearch);
+$("q").addEventListener("keydown", e => { if (e.key === "Escape") { $("q").value = ""; doSearch(); } if (e.key === "Enter" && S.hits.size) select([...S.hits][0]); });
+$("qClear").addEventListener("click", () => { $("q").value = ""; doSearch(); $("q").focus(); });
+
+function findIdx(t) { t = t.trim(); return S.data.items.findIndex(x => x.t === t); }
+function doAnalogy() {
+  const st = $("aStatus"), ul = $("aRes"); ul.replaceChildren(); S.ana = null;
+  const ids = ["aA", "aB", "aC"].map(id => findIdx($(id).value));
+  if (ids.some(i => i < 0)) { st.textContent = "A、B、C 都要填資料裡存在的項目（可從下拉選）。"; st.className = "status err"; dirty = true; return; }
+  const d = S.dim, q = new Float32Array(d);
+  for (let j = 0; j < d; j++) q[j] = S.norm[ids[0] * d + j] - S.norm[ids[1] * d + j] + S.norm[ids[2] * d + j];
+  let qn = 0; for (let j = 0; j < d; j++) qn += q[j] ** 2; qn = Math.sqrt(qn) || 1;
+  const n = S.data.items.length, sims = [];
+  for (let i = 0; i < n; i++) { if (ids.includes(i)) continue; let s = 0; for (let j = 0; j < d; j++) s += S.norm[i * d + j] * q[j]; sims.push([i, s / qn]); }
+  sims.sort((a, b) => b[1] - a[1]); const res = sims.slice(0, 8);
+  S.ana = { ids, res };
+  // 這個答案原本是 C 的第幾近鄰？（同樣排除 A、B、C）→ 判斷運算有沒有加入新資訊
+  const r0 = res[0][0], ci = ids[2]; let simR = 0; for (let j = 0; j < d; j++) simR += S.norm[r0 * d + j] * S.norm[ci * d + j];
+  let rank = 1; for (let i = 0; i < n; i++) { if (ids.includes(i) || i === r0) continue; let s = 0; for (let j = 0; j < d; j++) s += S.norm[i * d + j] * S.norm[ci * d + j]; if (s > simR) rank++; }
+  const T = i => S.data.items[i].t;
+  const msg = rank === 1 ? `⚠ 「${T(r0)}」本來就是「${T(ci)}」最近的詞（第 1 名），這次運算沒有加入新資訊。`
+    : rank === 2 ? `「${T(r0)}」原本就是「${T(ci)}」的第 2 近鄰，運算把它推到第 1，提升有限。`
+    : `「${T(r0)}」原本只是「${T(ci)}」的第 ${rank} 近鄰，運算把它推到第 1，表示運算有加入資訊。`;
+  st.className = "status"; st.replaceChildren(`${T(ids[0])} − ${T(ids[1])} + ${T(ci)} ≈ ${T(r0)}`, el("div", { class: "note", text: msg }));
+  res.forEach(([i, s]) => ul.append(itemButton(i, s)));
+  dirty = true;
+}
+$("aGo").addEventListener("click", doAnalogy);
+
+/* ───────── 範例與使用說明 ───────── */
+// 「實測」欄是在內建範例資料＋語意模型上量到的結果；對照組刻意不相關，不預設結果。
+const ANA_EX = [
+  { a: "king", b: "man", c: "woman", why: "✓ 運算有加資訊：queen 原本只是 woman 的第 5 近鄰（0.51），運算後升到第 1（0.73）" },
+  { a: "queen", b: "woman", c: "man", why: "✓ 運算有加資訊：king 不在 man 的前 6 名近鄰，運算後升到第 1（0.78）" },
+  { a: "prince", b: "man", c: "woman", why: "△ princess 原本是 woman 的第 2 近鄰（0.57），運算後升到第 1（0.76），加分有限" },
+  { a: "Paris", b: "France", c: "Japan", why: "⚠ Tokyo（0.88）本來就是 Japan 最近的詞（0.90），運算沒加資訊，不能證明「首都方向」" },
+  { a: "Taipei", b: "Taiwan", c: "Japan", why: "⚠ 同上：答案 Tokyo 本來就是 Japan 的第 1 近鄰" },
+  { a: "老師", b: "學校", c: "醫院", why: "⚠ 病人、醫生本來就是 醫院 的第 1、2 近鄰（0.83／0.81），運算沒加資訊" },
+  { a: "貓", b: "老師", c: "汽車", why: "對照組：結果 轎車（0.62）就是 汽車 的第 1 近鄰（0.95）。A−B 沒意義時，結果只會退回 C 的近義詞" }
+];
+const exLabel = e => `${e.a} − ${e.b} + ${e.c}`;
+function exMissing(e) {
+  if (!S.data) return "尚未載入資料";
+  if (!S.vec) return "這份資料沒有原始向量";
+  const miss = [e.a, e.b, e.c].filter(t => findIdx(t) < 0);
+  return miss.length ? "目前資料中沒有：" + miss.join("、") : "";
+}
+function runExample(e) {
+  $("aA").value = e.a; $("aB").value = e.b; $("aC").value = e.c; doAnalogy();
+  $("aStatus").scrollIntoView({ block: "nearest" });
+}
+function renderExamples() {
+  const box = $("anaEx"); if (!box) return; box.replaceChildren();
+  ANA_EX.forEach(e => {
+    const why = exMissing(e), b = el("button", { type: "button", class: "ex", text: exLabel(e), title: why || e.why });
+    if (why) { b.disabled = true; b.title = why + "（可在使用說明按「切換到內建範例資料」）"; }
+    b.addEventListener("click", () => runExample(e));
+    box.append(b);
+  });
+}
+const help = $("help"), helpBtn = $("helpBtn");
+function renderHelp() {
+  const ul = $("helpEx"); ul.replaceChildren();
+  ANA_EX.forEach(e => {
+    const why = exMissing(e), b = el("button", { type: "button", class: "btn sec", text: "試試看" });
+    if (why) { b.disabled = true; b.title = why; }
+    b.addEventListener("click", () => { help.close(); runExample(e); });
+    ul.append(el("li", null, el("span", null, el("span", { class: "eq", text: exLabel(e) }), el("div", { class: "why", text: why ? "⚠ " + why : e.why })), b));
+  });
+  const isDemo = S.data && window.DEMO_DATA && S.data.items.length === window.DEMO_DATA.items.length && S.data.items[0].t === window.DEMO_DATA.items[0].t;
+  $("helpDataNote").textContent = isDemo ? "目前載入的是內建範例資料（72 筆中英文詞句），下面的範例都可以直接試。"
+    : "目前載入的不是內建範例資料，範例中的詞若不在你的資料裡，按鈕會停用。想直接試範例，請按下方「切換到內建範例資料」。";
+  $("helpDemo").disabled = !window.DEMO_DATA;
+}
+helpBtn.addEventListener("click", () => { renderHelp(); help.showModal(); });
+$("helpX").addEventListener("click", () => help.close());
+$("helpClose").addEventListener("click", () => help.close());
+help.addEventListener("click", e => { if (e.target === help) help.close(); });   // 點背景關閉
+$("helpDemo").addEventListener("click", () => { load(window.DEMO_DATA); chip(""); status("已切換為內建範例資料。", "ok"); renderHelp(); });
+$("aClr").addEventListener("click", () => { ["aA", "aB", "aC"].forEach(id => $(id).value = ""); S.ana = null; $("aRes").replaceChildren(); $("aStatus").textContent = ""; dirty = true; });
+
+/* ───────── 控制項 ───────── */
+const segSrc = seg("segSrc", v => { S.source = v; });
+// 計算位置：本機伺服器只有在 http://127.0.0.1 / localhost 開啟時才可用；其餘（file://、github.io）只能瀏覽器內計算
+const segWhere = seg("segWhere", v => { S.where = v; updateWhereNote(); });
+function updateWhereNote() {
+  $("whereNote").textContent = S.where === "browser"
+    ? "瀏覽器內：不需啟動任何東西，資料不會離開你的電腦。第一次需連網下載約 118 MB 模型。只有語意模型、只有 PCA、上限 1500 筆。"
+    : "本機 Python：用你電腦的 GPU，較快；可選 GPT-2 嵌入層、t-SNE，上限 3000 筆。需先雙擊「啟動.bat」。";
+}
+segWhere.disable("server", !isLocalHostEarly());
+function isLocalHostEarly() { return ["127.0.0.1", "localhost"].includes(location.hostname); }
+S.where = isLocalHostEarly() ? "server" : "browser"; segWhere.set(S.where);
+const segDim = seg("segDim", v => { S.method = v; dirty = true; });
+const segCol = seg("segCol", v => { S.colorBy = v; if (S.data) { buildLegend(); renderSel(); } dirty = true; });
+const kS = slider("kRange", "kOut", () => {}, k => { if (!S.vec) { status("沒有原始向量，無法重新分群。", "err"); return; } S.clusters = kmeans(k); if (S.colorBy === "cluster") { S.hidden.clear(); buildLegend(); } renderSel(); dirty = true; });
+slider("sizeRange", "sizeOut", v => { S.size = v; dirty = true; });
+slider("nnRange", "nnOut", v => { S.nnN = v; renderSel(); dirty = true; });
+sw("swLabels", true, v => { S.labels = v; dirty = true; });
+sw("swLines", false, v => { S.lines = v; dirty = true; });
+sw("swRot", false, v => { S.rot = v; dirty = true; });
+$("reset").addEventListener("click", resetView);
+
+/* ───────── 檔案（按鈕＋拖放） ───────── */
+const drop = $("drop"), fileIn = $("file");
+$("pick").addEventListener("click", () => fileIn.click());
+fileIn.addEventListener("change", () => { if (fileIn.files[0]) readFile(fileIn.files[0]); fileIn.value = ""; });
+["dragenter", "dragover"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === document.documentElement) drop.classList.remove("over"); }));
+document.addEventListener("drop", e => { const f = e.dataTransfer?.files?.[0]; if (f) readFile(f); });
+function chip(name) {
+  const box = $("chipBox"); box.replaceChildren(); if (!name) return;
+  const x = el("button", { type: "button", "aria-label": "移除已匯入的檔案：" + name, text: "✕" });
+  x.addEventListener("click", () => { box.replaceChildren(); $("txt").value = ""; $("pick").focus(); });
+  box.append(el("span", { class: "chip", title: name }, el("span", { text: name }), x));
+}
+function readFile(f) {
+  if (f.size > 4 * 1024 * 1024) { status("檔案超過 4 MB，請分批匯入。", "err"); return; }
+  const rd = new FileReader();
+  rd.onerror = () => status("讀檔失敗：" + (rd.error?.name || "未知錯誤"), "err");
+  rd.onload = () => {
+    const text = String(rd.result);
+    if (/\.json$/i.test(f.name)) {
+      try { load(JSON.parse(text)); chip(f.name); status("已載入 " + f.name + "（含向量，不需重算）", "ok"); }
+      catch (e) { status("JSON 無法載入：" + e.message + "。需要是本工具匯出的格式。", "err"); }
+    } else { $("txt").value = text; chip(f.name); status("已匯入 " + f.name + "，按「計算並顯示」。", "ok"); }
+  };
+  rd.readAsText(f, "utf-8");
+}
+
+/* ───────── 瀏覽器內計算（Transformers.js，同一個多語言模型的 q8 量化版） ─────────
+   資料不會離開你的電腦；第一次需連網下載函式庫與約 118 MB 的模型，之後瀏覽器會快取。
+   與本機 Python 版的差異：只有語意模型、只有 PCA（無 t-SNE）、上限 1500 筆、向量因量化略有誤差（實測同句餘弦 0.996–0.998）。 */
+const TJS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/+esm";
+const BROWSER_MODEL = "Xenova/paraphrase-multilingual-MiniLM-L12-v2";
+const BROWSER_MAX = 1500;
+let extractorP = null, progressSink = () => {};
+const tick = () => new Promise(r => setTimeout(r, 0));
+function getExtractor() {
+  if (!extractorP) extractorP = import(TJS_URL)
+    .then(m => m.pipeline("feature-extraction", BROWSER_MODEL, { dtype: "q8", device: "wasm", progress_callback: p => progressSink(p) }))
+    .catch(e => { extractorP = null; throw e; });
+  return extractorP;
+}
+function parseItemsJS(text) {   // 與 embed_core.parse_items 同規則
+  const items = [], seen = new Set();
+  for (const raw of text.split(/\r?\n/)) {
+    let line = raw.trim(); if (!line || line.startsWith("#")) continue;
+    let g = ""; const m = line.match(/^(.*?)(?:\t|,(?=\S))\s*([^\t,，]{1,30})$/);
+    if (m && m[1].trim()) { line = m[1].trim(); g = m[2].trim(); }
+    line = line.slice(0, 300); const key = line + "\u0000" + g;
+    if (seen.has(key)) continue; seen.add(key); items.push({ t: line, g });
+  }
+  return items;
+}
+function f32ToB64(f) {
+  const u = new Uint8Array(f.buffer, f.byteOffset, f.byteLength); let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function pca3(V, n, d) {        // 冪迭代求前 3 個主成分（V 已正規化）
+  const out = new Float32Array(n * 3);
+  if (n < 4) { for (let i = 0; i < n; i++) out[i * 3] = i - (n - 1) / 2; }
+  else {
+    const mean = new Float64Array(d); for (let i = 0; i < n; i++) for (let j = 0; j < d; j++) mean[j] += V[i * d + j] / n;
+    const X = new Float32Array(n * d); for (let i = 0; i < n; i++) for (let j = 0; j < d; j++) X[i * d + j] = V[i * d + j] - mean[j];
+    let seed = 11; const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const comps = [];
+    for (let c = 0; c < 3; c++) {
+      let v = Float64Array.from({ length: d }, () => rnd() - .5);
+      for (let it = 0; it < 80; it++) {
+        const u = new Float64Array(n); for (let i = 0; i < n; i++) { let s = 0; for (let j = 0; j < d; j++) s += X[i * d + j] * v[j]; u[i] = s; }
+        const w = new Float64Array(d); for (let i = 0; i < n; i++) { const ui = u[i]; for (let j = 0; j < d; j++) w[j] += X[i * d + j] * ui; }
+        for (const pc of comps) { let dot = 0; for (let j = 0; j < d; j++) dot += w[j] * pc[j]; for (let j = 0; j < d; j++) w[j] -= dot * pc[j]; }
+        let nm = 0; for (let j = 0; j < d; j++) nm += w[j] * w[j]; nm = Math.sqrt(nm) || 1; for (let j = 0; j < d; j++) v[j] = w[j] / nm;
+      }
+      comps.push(v);
+      for (let i = 0; i < n; i++) { let s = 0; for (let j = 0; j < d; j++) s += X[i * d + j] * v[j]; out[i * 3 + c] = s; }
+    }
+  }
+  let mx = 0; for (const x of out) mx = Math.max(mx, Math.abs(x)); if (mx > 0) for (let k = 0; k < out.length; k++) out[k] /= mx;
+  return out;
+}
+function neighborsJS(V, n, d, top = 10) {
+  const t = Math.min(top, n - 1), res = [], M = new Float32Array(n * n);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    let s = 0; for (let q = 0; q < d; q++) s += V[i * d + q] * V[j * d + q]; M[i * n + j] = M[j * n + i] = s;
+  }
+  for (let i = 0; i < n; i++) {
+    const taken = new Set(), row = [];
+    for (let r = 0; r < t; r++) {
+      let best = -1, bs = -2; for (let j = 0; j < n; j++) if (j !== i && !taken.has(j) && M[i * n + j] > bs) { bs = M[i * n + j]; best = j; }
+      taken.add(best); row.push([best, Math.round(bs * 1e4) / 1e4]);
+    }
+    res.push(row);
+  }
+  return res;
+}
+async function computeInBrowser(text, say) {
+  const all = parseItemsJS(text);
+  if (all.length < 2) throw new Error("至少需要 2 筆資料（每行一筆）");
+  const truncated = all.length > BROWSER_MAX, items = all.slice(0, BROWSER_MAX), n = items.length;
+  say("載入函式庫與模型…（第一次需連網下載，約 118 MB）");
+  progressSink = p => { if (p.status === "progress" && /\.onnx$/.test(p.file || "")) say(`下載模型 ${Math.round(p.progress)}%（約 118 MB，之後瀏覽器會快取）`); };
+  let ext; try { ext = await getExtractor(); } catch (e) { throw new Error("無法載入 Transformers.js 或模型，需要連網（" + (e.message || e) + "）"); }
+  progressSink = () => {};
+  let V = null, d = 0;
+  for (let i = 0; i < n; i += 32) {
+    const out = await ext(items.slice(i, i + 32).map(x => x.t), { pooling: "mean", normalize: true });
+    if (!V) { d = out.dims[1]; V = new Float32Array(n * d); }
+    V.set(out.data, i * d); say(`計算向量 ${Math.min(i + 32, n)} / ${n}`); await tick();
+  }
+  say("降維、分群、找最近鄰…"); await tick();
+  const k = Math.max(2, Math.min(12, Math.round(Math.sqrt(n / 2))));
+  const labels = kmeansOn(V, n, d, Math.min(k, n)), P = pca3(V, n, d), nn = neighborsJS(V, n, d);
+  const r4 = x => Math.round(x * 1e4) / 1e4;
+  return {
+    meta: { source: "semantic", model: BROWSER_MODEL + "（q8，瀏覽器內）", runtime: "browser", n, dim: d, k: Math.min(k, n),
+            groups: [...new Set(items.map(x => x.g).filter(Boolean))].sort(), truncated, tsne: false },
+    items: items.map((it, i) => ({ t: it.t, g: it.g, c: labels[i], p: [r4(P[i * 3]), r4(P[i * 3 + 1]), r4(P[i * 3 + 2])], nn: nn[i] })),
+    vec: f32ToB64(V)
+  };
+}
+
+/* ───────── 計算（依「計算位置」選擇：瀏覽器內 或 本機 Python 伺服器） ───────── */
+$("go").addEventListener("click", async () => {
+  const text = $("txt").value.trim(); if (!text) { status("請先輸入資料。", "err"); return; }
+  const b = $("go"); b.disabled = true;
+  try {
+    if (S.where === "browser") {
+      if (S.source !== "semantic") { status("GPT-2 嵌入層只能用「本機 Python」計算。請改選「語意模型」，或啟動本機伺服器。", "err"); return; }
+      const j = await computeInBrowser(text, m => status(m));
+      load(j); status(`完成：${j.meta.n} 筆（瀏覽器內計算，僅 PCA）。` + (j.meta.truncated ? ` 超過 ${BROWSER_MAX} 筆，只取前 ${BROWSER_MAX} 筆。` : ""), j.meta.truncated ? "err" : "ok");
+    } else {
+      const lines = text.split("\n").length;
+      status("計算中…" + (S.source === "semantic" ? "（第一次會下載並載入模型，約 1 分鐘）" : "（第一次會下載 GPT-2，約 1 分鐘）") +
+        (lines > 800 ? " 筆數多，t-SNE 需再等約 1 分鐘；超過 1500 筆只提供 PCA。" : ""));
+      const r = await fetch("/api/embed", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, source: S.source, k: 0 }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+      load(j); status(`完成：${j.meta.n} 筆。`, "ok");
+    }
+  } catch (e) { status("計算失敗：" + e.message + (S.where === "server" ? "（伺服器是否已啟動？）" : ""), "err"); }
+  finally { b.disabled = false; }
+});
+$("demo").addEventListener("click", () => { if (window.DEMO_DATA) { load(window.DEMO_DATA); chip(""); status("已載入範例。", "ok"); } else status("找不到 demo_data.js。", "err"); });
+
+/* ───────── 匯出 ───────── */
+function download(blob, name) { const a = el("a", { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+$("expJson").addEventListener("click", () => { if (!S.data) return; download(new Blob([JSON.stringify(S.data)], { type: "application/json" }), "embedding_view.json"); });
+$("expPng").addEventListener("click", () => { if (!S.data) return; draw(); cv.toBlob(b => download(b, "embedding_view.png")); });
+
+/* ───────── 啟動 ───────── */
+$("txt").value = "貓,動物\n狗,動物\n蘋果,水果\n香蕉,水果\n汽車,交通\n飛機,交通\nking,英文\nqueen,英文\n";
+resize(); requestAnimationFrame(loop);
+if (window.DEMO_DATA) { load(window.DEMO_DATA); status("已載入範例（72 筆）。貼上自己的資料後按「計算並顯示」。"); }
+else status("找不到 demo_data.js，請匯入資料。", "err");
+window.__S = S;
+</script>
+</body>
+</html>
